@@ -1,0 +1,5 @@
+(executable
+ (public_name chess_engine)
+ (name main)
+ (libraries base)
+ (preprocess (pps ppx_jane)))
