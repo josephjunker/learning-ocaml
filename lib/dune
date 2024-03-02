@@ -1,0 +1,4 @@
+(library
+ (name chess_engine)
+ (libraries base)
+ (preprocess (pps ppx_jane)))
