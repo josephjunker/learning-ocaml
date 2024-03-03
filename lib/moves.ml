@@ -18,10 +18,10 @@ let get_possibly_capturing_target board_state position =
 
 type rider_offset = {row_step: int; column_step: int}
 
-let iterate_rider initial_position board_state offset =
+let iterate_rider initial_position board_state ~row_step ~column_step =
   Sequence.unfold ~init:initial_position ~f:(fun current_position ->
-      let row = current_position.row + offset.row_step in
-      let column = current_position.column + offset.column_step in
+      let row = current_position.row + row_step in
+      let column = current_position.column + column_step in
       let new_position = {row; column} in
       let target_move =
         get_possibly_capturing_target board_state new_position
@@ -34,19 +34,17 @@ let iterate_rider initial_position board_state offset =
 
 let rook_moves board_state initial_position =
   Sequence.round_robin
-    [ iterate_rider initial_position board_state {row_step= -1; column_step= 0}
-    ; iterate_rider initial_position board_state {row_step= 1; column_step= 0}
-    ; iterate_rider initial_position board_state {row_step= 0; column_step= -1}
-    ; iterate_rider initial_position board_state {row_step= 0; column_step= 1}
-    ]
+    [ iterate_rider initial_position board_state ~row_step:(-1) ~column_step:0
+    ; iterate_rider initial_position board_state ~row_step:1 ~column_step:0
+    ; iterate_rider initial_position board_state ~row_step:0 ~column_step:(-1)
+    ; iterate_rider initial_position board_state ~row_step:0 ~column_step:1 ]
 
 let bishop_moves board_state initial_position =
   Sequence.round_robin
-    [ iterate_rider initial_position board_state {row_step= -1; column_step= -1}
-    ; iterate_rider initial_position board_state {row_step= -1; column_step= 1}
-    ; iterate_rider initial_position board_state {row_step= 1; column_step= -1}
-    ; iterate_rider initial_position board_state {row_step= 1; column_step= 1}
-    ]
+    [ iterate_rider initial_position board_state ~row_step:(-1) ~column_step:(-1)
+    ; iterate_rider initial_position board_state ~row_step:(-1) ~column_step:1
+    ; iterate_rider initial_position board_state ~row_step:1 ~column_step:(-1)
+    ; iterate_rider initial_position board_state ~row_step:1 ~column_step:1 ]
 
 let queen_moves board_state initial_position =
   Sequence.round_robin
@@ -79,63 +77,99 @@ let king_moves board_state {row; column} =
     ~f:(fun new_position ->
       get_possibly_capturing_target board_state new_position )
 
-let pawn_moves board_state initial_position =
-  let current_player = board_state.turn in
-  let direction = match current_player with White -> 1 | Black -> -1 in
+type pawn_rules =
+  { direction: int
+  ; current_player: player
+  ; opponent: player
+  ; promotion_row: int
+  ; unmoved_row: int
+  ; en_passant_row: int }
+
+let white_pawn_rules =
+  { direction= 1
+  ; current_player= White
+  ; opponent= Black
+  ; promotion_row= 8
+  ; unmoved_row= 2
+  ; en_passant_row= 5 }
+
+let black_pawn_rules =
+  { direction= -1
+  ; current_player= Black
+  ; opponent= White
+  ; promotion_row= 1
+  ; unmoved_row= 7
+  ; en_passant_row= 4 }
+
+let promote_pawn position =
+  [Promotion (Queen, position); Promotion (Knight, position)]
+
+let capture_promote_pawn position =
+  [CapturePromotion (Queen, position); CapturePromotion (Knight, position)]
+
+let pawn_forward_two initial_position direction board_state =
   let {row; column} = initial_position in
-  let not_yet_moved =
-    match current_player with White -> row = 2 | Black -> row = 7
+  let forward_two_target = {row= row + direction + direction; column} in
+  match Map.find board_state.pieces_by_position forward_two_target with
+  | Some _ ->
+      []
+  | None ->
+      [Move forward_two_target]
+
+let pawn_forward pawn_rules initial_position board_state =
+  let {row; column} = initial_position in
+  let {direction; unmoved_row; promotion_row; _} = pawn_rules in
+  let forward_one_target = {row= row + direction; column} in
+  match Map.find board_state.pieces_by_position forward_one_target with
+  | Some _ ->
+      []
+  | None ->
+      if row + direction = promotion_row then promote_pawn forward_one_target
+      else if row = unmoved_row then
+        List.concat
+          [ pawn_forward_two initial_position direction board_state
+          ; [Move forward_one_target] ]
+      else [Move forward_one_target]
+
+let pawn_capture pawn_rules column_direction initial_position board_state =
+  let {direction; opponent; promotion_row; _} = pawn_rules in
+  let {row; column} = initial_position in
+  let capture_target =
+    {row= row + direction; column= column + column_direction}
   in
-  let forward_one_target = {row; column= column + direction} in
-  let forward_one =
-    match Map.find board_state.pieces_by_position forward_one_target with
-    | Some _ ->
-        None
+  match Map.find board_state.pieces_by_position capture_target with
+  | Some other_piece ->
+      if compare_player other_piece.owner opponent = 0 then []
+      else if capture_target.row = promotion_row then
+        capture_promote_pawn capture_target
+      else [Capture capture_target]
+  | _ ->
+      []
+
+let pawn_capture_left pawn_rules initial_position board_state =
+  pawn_capture pawn_rules (-1) initial_position board_state
+
+let pawn_capture_right pawn_rules initial_position board_state =
+  pawn_capture pawn_rules 1 initial_position board_state
+
+let en_passant pawn_rules initial_position board_state =
+  let {row; column} = initial_position in
+  let {direction; en_passant_row; _} = pawn_rules in
+  if not (row = en_passant_row) then []
+  else
+    match board_state.en_passant_valid_column with
+    | Some col ->
+        if col - 1 = column || col + 1 = column then
+          [ EnPassant
+              { destination= {row= row + direction; column= col}
+              ; captured= {row; column= col} } ]
+        else []
     | None ->
-        Some (Move forward_one_target)
-  in
-  let forward_two_target = {row; column= column + direction + direction} in
-  let forward_two =
-    if not not_yet_moved then None
-    else
-      match Map.find board_state.pieces_by_position forward_two_target with
-      | Some _ ->
-          None
-      | None ->
-          Some (Move forward_two_target)
-  in
-  let capture_left_target = {row= row - 1; column= column + direction} in
-  let capture_left =
-    match Map.find board_state.pieces_by_position capture_left_target with
-    | Some {owner; _} ->
-        if compare_player owner board_state.turn = 0 then None
-        else Some (Capture capture_left_target)
-    | _ ->
-        None
-  in
-  let capture_right_target = {row= row + 1; column= column + direction} in
-  let capture_right =
-    match Map.find board_state.pieces_by_position capture_right_target with
-    | Some {owner= Black; _} ->
-        Some (Capture capture_right_target)
-    | _ ->
-        None
-  in
-  let en_passant_row = match current_player with White -> 5 | Black -> 4 in
-  let en_passant =
-    if not (row = en_passant_row) then None
-    else
-      match board_state.en_passant_valid_column with
-      | Some col ->
-          if col - 1 = column || col + 1 = column then
-            Some
-              (EnPassant
-                 { destination= {row= row + direction; column= col}
-                 ; captured= {row; column= col} } )
-          else None
-      | None ->
-          None
-  in
-  List.filter_map
-    [forward_one; forward_two; capture_left; capture_right; en_passant]
-    ~f:(fun x -> x )
+        []
+
+let pawn_moves pawn_rules board_state initial_position =
+  List.concat
+    [ pawn_forward pawn_rules initial_position board_state
+    ; pawn_capture_left pawn_rules initial_position board_state
+    ; pawn_capture_right pawn_rules initial_position board_state
+    ; en_passant pawn_rules initial_position board_state ]

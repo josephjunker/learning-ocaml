@@ -47,3 +47,5 @@ type move =
   | Move of position
   | Capture of position
   | EnPassant of {destination: position; captured: position}
+  | Promotion of piece_type * position
+  | CapturePromotion of piece_type * position
