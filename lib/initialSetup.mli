@@ -1,1 +1,1 @@
-val initial_board_state: ChessData.board_state
+val initial_board_state : ChessData.board_state

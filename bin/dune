@@ -2,4 +2,5 @@
  (name main)
  (public_name chess_engine)
  (libraries base chess_engine)
- (preprocess (pps ppx_jane)))
+ (preprocess
+  (pps ppx_jane)))
