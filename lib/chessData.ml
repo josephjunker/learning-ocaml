@@ -47,3 +47,8 @@ type board_state = {
   fifty_move_counter: int;
   zobrist_history: int64 list;
 }
+
+type move =
+| Move of position
+| Capture of position
+| EnPassant of { destination: position; captured: position }
